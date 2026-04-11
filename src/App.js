@@ -1,91 +1,99 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import styled, { createGlobalStyle, css, keyframes } from 'styled-components';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  ShoppingCart, Coffee, X, Plus, Minus, Trash2, 
-  Navigation, Star, Search, Moon, Sun, MapPin, Zap, Save, RotateCcw, CheckCircle, Terminal
+  ShoppingCart, Coffee, Star, Moon, Sun, Zap, Save, RotateCcw, Terminal, Radio, TrendingUp, AlertCircle
 } from 'lucide-react';
 
-// --- ANIMATIONS ---
-const scanline = keyframes`
-  0% { bottom: 100%; }
-  100% { bottom: 0%; }
-`;
+// --- UTILS & AUDIO ---
+const playTone = (freq, type = 'sine', duration = 0.1) => {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime + duration);
+};
 
 // --- STORE ENGINE ---
 const useStore = create(
   persist(
     (set, get) => ({
       location: 'LAC 2',
+      isTransiting: false,
       cart: [],
       inventory: {
-        'LAC 2': { 1: 12, 2: 6, 3: 15, 4: 9, 5: 10, 6: 14 },
-        'TUNIS MARINE': { 1: 5, 2: 2, 3: 30, 4: 0, 5: 20, 6: 40 }
+        'LAC 2': { 1: 15, 2: 8, 3: 20, 4: 10, 5: 15, 6: 25 },
+        'TUNIS MARINE': { 1: 5, 2: 2, 3: 40, 4: 0, 5: 10, 6: 50 }
       },
       orders: [],
-      unlockedBadges: [],
+      history: [], // Temporal State Snapshots
+      marketOscillator: 1.0, // Economic Edict factor
 
-      setLocation: (loc) => set({ location: loc }),
+      setHub: (loc) => {
+        set({ isTransiting: true });
+        playTone(150, 'square', 0.4);
+        setTimeout(() => set({ location: loc, isTransiting: false }), 1200);
+      },
 
-      addToCart: (product) => {
+      updateMarket: () => {
+        // Simulates economic flux: 0.85 to 1.15 multiplier
+        const newFactor = 0.85 + Math.random() * 0.3;
+        set({ marketOscillator: newFactor });
+      },
+
+      saveSnapshot: () => {
+        const { cart, inventory, location } = get();
+        const snap = { id: Date.now(), cart: [...cart], inventory: JSON.parse(JSON.stringify(inventory)), location };
+        set(state => ({ history: [snap, ...state.history].slice(0, 5) }));
+        playTone(1000, 'sine', 0.1);
+      },
+
+      restoreSnapshot: (snap) => {
+        set({ cart: snap.cart, inventory: snap.inventory, location: snap.location });
+        playTone(400, 'square', 0.2);
+      },
+
+      addToCart: (product, price) => {
         const { location, inventory, cart } = get();
         if (inventory[location][product.id] <= 0) return;
         
-        const newInv = { 
-          ...inventory, 
-          [location]: { ...inventory[location], [product.id]: inventory[location][product.id] - 1 } 
-        };
+        playTone(800);
+        const newInv = { ...inventory, [location]: { ...inventory[location], [product.id]: inventory[location][product.id] - 1 } };
         const existing = cart.find(i => i.id === product.id);
-        
+
         set({
           inventory: newInv,
           cart: existing 
             ? cart.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i)
-            : [...cart, { ...product, quantity: 1 }]
+            : [...cart, { ...product, quantity: 1, currentPrice: price }]
         });
       },
 
-      updateQuantity: (id, delta) => set((state) => {
-        const item = state.cart.find(i => i.id === id);
-        if (!item) return state;
-        const currentLoc = state.location;
-        if (delta > 0 && state.inventory[currentLoc][id] <= 0) return state;
-
-        return {
-          inventory: {
-            ...state.inventory,
-            [currentLoc]: { ...state.inventory[currentLoc], [id]: state.inventory[currentLoc][id] - delta }
-          },
-          cart: state.cart.map(i => i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i)
-        };
-      }),
-
       processCheckout: () => {
-        const { cart, unlockedBadges } = get();
+        const { cart, location } = get();
         if (cart.length === 0) return;
-
-        const itemIds = cart.map(i => i.id);
-        const earnedPastry = itemIds.includes(3) && itemIds.includes(6);
         
-        const newOrder = {
-          id: `NOIR-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          items: [...cart],
-          timestamp: Date.now(),
-          status: 'Brewing...'
-        };
+        // Traffic Logic: More items/Station density = Higher delay
+        const stationLoad = location === 'TUNIS MARINE' ? 1.5 : 1.0;
+        const waitTime = Math.floor((Math.random() * 10 + 5) * stationLoad);
 
-        set((state) => ({
-          orders: [newOrder, ...state.orders],
-          unlockedBadges: earnedPastry && !unlockedBadges.includes('Pastry Master') 
-            ? [...unlockedBadges, 'Pastry Master'] 
-            : unlockedBadges,
-          cart: []
-        }));
+        const newOrder = { 
+          id: `TX-${Math.random().toString(36).substr(2, 4).toUpperCase()}`, 
+          items: [...cart], 
+          timestamp: Date.now(),
+          eta: waitTime,
+          status: 'Brewing'
+        };
+        set(state => ({ orders: [newOrder, ...state.orders], cart: [] }));
+        playTone(200, 'sawtooth', 0.3);
       }
     }),
-    { name: 'noir-bean-v23-1' }
+    { name: 'noir-bean-v25-ledger' }
   )
 );
 
@@ -93,16 +101,28 @@ const useStore = create(
 const GlobalStyle = createGlobalStyle`
   :root {
     ${props => props.$isNight ? css`
-      --primary: #d4a373; --bg: #110e0c; --card: #1e1a17; --text: #fdfcfb; --border: #2d2621;
+      --primary: #d4a373; --bg: #0a0a0a; --card: #151515; --text: #ffffff; --border: #222;
     ` : css`
-      --primary: #6f4e37; --bg: #fdfcfb; --card: #ffffff; --text: #1a1512; --border: #f0f0f0;
+      --primary: #6f4e37; --bg: #fdfcfb; --card: #ffffff; --text: #1a1512; --border: #eee;
     `}
   }
-  body { margin: 0; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); }
+  body { margin: 0; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); overflow-x: hidden; }
 `;
 
-const AppContainer = styled.div`
-  max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg);
+const HubWipe = keyframes`
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+`;
+
+const MainContent = styled(motion.main)`
+  flex: 1; padding: 0 1.5rem 120px;
+  &.hub-switching { animation: ${HubWipe} 0.8s cubic-bezier(0.77, 0, 0.175, 1); }
+`;
+
+const PriceTag = styled.span`
+  font-weight: 900; color: var(--primary);
+  display: flex; alignItems: center; gap: 4px;
+  font-size: 1rem;
 `;
 
 const FooterNav = styled.footer`
@@ -114,162 +134,164 @@ const FooterNav = styled.footer`
 
 const NavItem = styled.div`
   display: flex; flex-direction: column; align-items: center; cursor: pointer;
-  color: ${props => props.$active ? 'var(--primary)' : '#666'};
-  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  ${props => props.$active && css`transform: translateY(-5px);`}
-  span { font-size: 0.6rem; font-weight: 900; margin-top: 4px; }
+  color: ${props => props.$active ? 'var(--primary)' : '#555'};
+  span { font-size: 0.6rem; font-weight: 900; margin-top: 4px; text-transform: uppercase; }
 `;
 
-const CRTOverlay = styled.div`
-  position: relative; overflow: hidden; background: #000; border-radius: 20px;
-  padding: 1.5rem; min-height: 300px; border: 2px solid #333;
-  &::after {
-    content: " "; position: absolute; top: 0; left: 0; bottom: 0; right: 0;
-    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 155, 0.03));
-    z-index: 2; background-size: 100% 2px, 3px 100%; pointer-events: none;
-  }
-`;
-
-const Scanline = styled.div`
-  width: 100%; height: 2px; background: rgba(0, 255, 0, 0.1);
-  position: absolute; bottom: 100%; animation: ${scanline} 4s linear infinite; z-index: 3;
-`;
-
+// --- MAIN APP ---
 export default function App() {
   const store = useStore();
   const [activeTab, setActiveTab] = useState('menu');
   const [isNight, setIsNight] = useState(new Date().getHours() >= 18);
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => setHydrated(true), []);
+  useEffect(() => {
+    setHydrated(true);
+    const economyInterval = setInterval(() => store.updateMarket(), 30000);
+    return () => clearInterval(economyInterval);
+  }, [store]);
+
+  const menuItems = [
+    { id: 1, name: 'Sand Coffee', basePrice: 4.5 },
+    { id: 2, name: 'Zgougou Latte', basePrice: 7.2 },
+    { id: 3, name: 'Bambalouni', basePrice: 3.5 },
+    { id: 4, name: 'Nitro Brew', basePrice: 6.5 },
+    { id: 5, name: 'Citronnade', basePrice: 4.0 },
+    { id: 6, name: 'Kaak Warka', basePrice: 2.5 },
+  ];
 
   if (!hydrated) return null;
 
   return (
-    <AppContainer>
+    <div style={{ maxWidth: '480px', margin: '0 auto', minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <GlobalStyle $isNight={isNight} />
       
       <header style={{ padding: '1.5rem', background: 'var(--bg)', position: 'sticky', top: 0, zIndex: 1000 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <select 
-              value={store.location} 
-              onChange={(e) => store.setLocation(e.target.value)}
-              style={{ background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.6rem', fontWeight: 900, padding: '2px 6px', marginBottom: '4px' }}
-            >
-              <option value="LAC 2">LAC 2 HUB</option>
-              <option value="TUNIS MARINE">TUNIS MARINE</option>
-            </select>
-            <div style={{ fontWeight: 900, fontSize: '1.4rem' }}>NOIR BEAN</div>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
+              <select 
+                value={store.location} 
+                onChange={(e) => store.setHub(e.target.value)}
+                style={{ background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.6rem', fontWeight: 900, padding: '2px 6px' }}
+              >
+                <option value="LAC 2">LAC 2 HUB</option>
+                <option value="TUNIS MARINE">TUNIS MARINE</option>
+              </select>
+              {store.marketOscillator > 1.05 && <TrendingUp size={14} color="#FF4D4D" />}
+            </div>
+            <div style={{ fontWeight: 900, fontSize: '1.5rem', letterSpacing: '-1px' }}>NOIR BEAN</div>
           </div>
-          <button onClick={() => setIsNight(!isNight)} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '8px', color: 'var(--text)' }}>
-            {isNight ? <Moon size={20} /> : <Sun size={20} />}
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={store.saveSnapshot} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '8px', color: 'var(--text)' }}><Save size={18}/></button>
+            <button onClick={() => setIsNight(!isNight)} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '8px', color: 'var(--text)' }}>
+              {isNight ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
+          </div>
         </div>
       </header>
 
-      <main style={{ flex: 1, padding: '0 1.5rem 100px' }}>
+      <MainContent className={store.isTransiting ? 'hub-switching' : ''}>
         <AnimatePresence mode="wait">
           {activeTab === 'menu' && (
             <motion.div key="menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                {[
-                  { id: 1, name: 'Sand Coffee', price: 4.5 },
-                  { id: 2, name: 'Zgougou Latte', price: 7.2 },
-                  { id: 3, name: 'Bambalouni', price: 3.5 },
-                  { id: 4, name: 'Nitro Brew', price: 6.5 },
-                  { id: 5, name: 'Citronnade', price: 4.0 },
-                  { id: 6, name: 'Kaak Warka', price: 2.5 },
-                ].map(item => (
-                  <div key={item.id} style={{ background: 'var(--card)', borderRadius: '20px', border: '1px solid var(--border)', padding: '1rem' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 800 }}>{item.name}</div>
-                    <div style={{ fontSize: '0.6rem', opacity: 0.5, marginBottom: '1rem' }}>{store.inventory[store.location][item.id]} left</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 900, color: 'var(--primary)' }}>${item.price}</span>
-                      <button onClick={() => store.addToCart(item)} disabled={store.inventory[store.location][item.id] <= 0}
-                        style={{ background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px', opacity: store.inventory[store.location][item.id] <= 0 ? 0.2 : 1 }}>
-                        <Plus size={16} />
-                      </button>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+                {menuItems.map(item => {
+                  const currentPrice = item.basePrice * store.marketOscillator;
+                  return (
+                    <div key={item.id} style={{ background: 'var(--card)', borderRadius: '24px', border: '1px solid var(--border)', padding: '1.2rem', position: 'relative' }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 800 }}>{item.name}</div>
+                      <div style={{ fontSize: '0.6rem', opacity: 0.4, marginBottom: '1rem' }}>HUB STOCK: {store.inventory[store.location][item.id]}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <PriceTag>${currentPrice.toFixed(2)}</PriceTag>
+                        <button 
+                          onClick={() => store.addToCart(item, currentPrice)} 
+                          disabled={store.inventory[store.location][item.id] <= 0}
+                          style={{ background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '10px', padding: '8px', cursor: 'pointer', opacity: store.inventory[store.location][item.id] <= 0 ? 0.2 : 1 }}
+                        >
+                          <ShoppingCart size={16} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+
+              {store.history.length > 0 && (
+                <div style={{ marginTop: '2.5rem' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 900, opacity: 0.5, marginBottom: '1rem', letterSpacing: '1px' }}>TEMPORAL SNAPSHOTS</div>
+                  <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px' }}>
+                    {store.history.map(snap => (
+                      <button key={snap.id} onClick={() => store.restoreSnapshot(snap)} style={{ background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 12px', borderRadius: '12px', fontSize: '0.65rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                        <RotateCcw size={12} style={{ marginRight: '4px' }}/> {new Date(snap.id).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
           {activeTab === 'pickup' && (
             <motion.div key="pickup" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <CRTOverlay>
-                <Scanline />
-                <div style={{ color: '#0f0', fontFamily: 'monospace', fontSize: '0.7rem' }}>
-                  <div style={{ marginBottom: '1rem' }}>[LOGIC_STREAM_ACTIVE]</div>
-                  {store.orders.map(order => (
-                    <div key={order.id} style={{ marginBottom: '1.5rem', borderLeft: '2px solid #0f0', paddingLeft: '10px' }}>
-                      <div>> ID: {order.id}</div>
-                      <div>> STATUS: {order.status}</div>
-                      <div style={{ color: '#555' }}>> {new Date(order.timestamp).toLocaleTimeString()}</div>
+              <div style={{ background: '#000', color: '#0f0', padding: '1.5rem', borderRadius: '24px', fontFamily: 'monospace', fontSize: '0.75rem', minHeight: '300px' }}>
+                <div style={{ borderBottom: '1px solid #1a1a1a', paddingBottom: '10px', marginBottom: '1rem' }}>[INFRASTRUCTURE_TERMINAL_v25]</div>
+                {store.orders.map(order => (
+                  <div key={order.id} style={{ marginBottom: '1.5rem', borderLeft: '2px solid #0f0', paddingLeft: '12px' }}>
+                    <div style={{ fontWeight: 'bold' }}>> ID: {order.id}</div>
+                    <div>> STATUS: {order.status}</div>
+                    <div style={{ color: '#555' }}>> HUB: {store.location}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '5px' }}>
+                      <div style={{ width: '100px', height: '4px', background: '#111' }}>
+                        <motion.div initial={{ width: 0 }} animate={{ width: '100%' }} transition={{ duration: order.eta }} style={{ height: '100%', background: '#0f0' }} />
+                      </div>
+                      <span style={{ fontSize: '0.6rem' }}>{order.eta}s</span>
                     </div>
-                  ))}
-                  {store.orders.length === 0 && <div>> SCANNING FOR SIGNALS...</div>}
-                </div>
-              </CRTOverlay>
-            </motion.div>
-          )}
-
-          {activeTab === 'rewards' && (
-            <motion.div key="rewards" initial={{ y: 20 }} animate={{ y: 0 }}>
-              <div style={{ background: 'var(--card)', borderRadius: '24px', padding: '2rem', border: '1px solid var(--border)' }}>
-                <h3 style={{ margin: '0 0 1.5rem' }}>Quests Completed</h3>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {store.unlockedBadges.map(badge => (
-                    <div key={badge} style={{ background: 'var(--primary)', color: 'white', padding: '8px 12px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 900 }}>
-                      {badge}
-                    </div>
-                  ))}
-                  {store.unlockedBadges.length === 0 && <p style={{ opacity: 0.4, fontSize: '0.8rem' }}>Unlock badges by buying combos!</p>}
-                </div>
+                  </div>
+                ))}
+                {store.orders.length === 0 && <div style={{ opacity: 0.3 }}>> LISTENING FOR BROADCASTS...</div>}
               </div>
             </motion.div>
           )}
 
           {activeTab === 'cart' && (
-            <motion.div key="cart" initial={{ x: 20 }} animate={{ x: 0 }}>
-              <h2 style={{ fontWeight: 900 }}>Basket</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <motion.div key="cart" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
+              <h2 style={{ fontWeight: 900 }}>Your Basket</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
                 {store.cart.map(item => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'var(--card)', borderRadius: '16px', border: '1px solid var(--border)' }}>
+                  <div key={item.id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '1rem', display: 'flex', justifyContent: 'space-between' }}>
                     <div>
                       <div style={{ fontWeight: 800 }}>{item.name}</div>
-                      <div style={{ color: 'var(--primary)', fontWeight: 800 }}>${item.price}</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 700 }}>${(item.currentPrice * item.quantity).toFixed(2)}</div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Minus size={20} onClick={() => store.updateQuantity(item.id, -1)} style={{ cursor: 'pointer' }} />
-                      <span style={{ fontWeight: 900 }}>{item.quantity}</span>
-                      <Plus size={20} onClick={() => store.updateQuantity(item.id, 1)} style={{ cursor: 'pointer' }} />
-                    </div>
+                    <div style={{ fontWeight: 900 }}>x{item.quantity}</div>
                   </div>
                 ))}
               </div>
               {store.cart.length > 0 && (
-                <button onClick={() => { store.processCheckout(); setActiveTab('pickup'); }}
-                  style={{ width: '100%', marginTop: '2rem', padding: '1.2rem', background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '16px', fontWeight: 900, cursor: 'pointer' }}>
-                  CONFIRM ORDER
+                <button 
+                  onClick={() => { store.processCheckout(); setActiveTab('pickup'); }}
+                  style={{ width: '100%', marginTop: '2rem', padding: '1.2rem', background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '20px', fontWeight: 900, cursor: 'pointer', boxShadow: '0 10px 20px rgba(111, 78, 55, 0.2)' }}
+                >
+                  EXECUTE TRANSACTION
                 </button>
               )}
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+      </MainContent>
 
       <FooterNav>
-        <NavItem $active={activeTab === 'menu'} onClick={() => setActiveTab('menu')}><Coffee size={24} /><span>MENU</span></NavItem>
-        <NavItem $active={activeTab === 'pickup'} onClick={() => setActiveTab('pickup')}><Terminal size={24} /><span>PICKUP</span></NavItem>
-        <NavItem $active={activeTab === 'rewards'} onClick={() => setActiveTab('rewards')}><Star size={24} /><span>REWARDS</span></NavItem>
+        <NavItem $active={activeTab === 'menu'} onClick={() => setActiveTab('menu')}><Coffee size={24} /><span>Menu</span></NavItem>
+        <NavItem $active={activeTab === 'pickup'} onClick={() => setActiveTab('pickup')}><Terminal size={24} /><span>Pickup</span></NavItem>
         <NavItem $active={activeTab === 'cart'} onClick={() => setActiveTab('cart')}>
-          <ShoppingCart size={24} />
-          <span>CART ({store.cart.length})</span>
+          <div style={{ position: 'relative' }}>
+            <ShoppingCart size={24} />
+            {store.cart.length > 0 && <span style={{ position: 'absolute', top: -5, right: -10, background: 'var(--primary)', color: 'white', fontSize: '0.5rem', width: 15, height: 15, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{store.cart.length}</span>}
+          </div>
+          <span>Cart</span>
         </NavItem>
       </FooterNav>
-    </AppContainer>
+    </div>
   );
 }
